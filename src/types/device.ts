@@ -9,14 +9,27 @@ export interface Device {
 export interface BorrowFormData {
   name: string;
   email: string;
-  reason: string;
-  customReason?: string;
-  deviceType: string;
-  deviceName: string;
+}
+
+export interface CartItem {
+  device: Device;
+  addedAt: Date;
 }
 
 export interface ReturnFormData {
   name: string;
   email: string;
   deviceName: string;
+}
+
+export interface SubmissionResult {
+  deviceId: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface ApiError {
+  message: string;
+  status?: number;
+  isNetworkError: boolean;
 }

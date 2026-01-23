@@ -1,62 +1,111 @@
 import React, { useState, useEffect } from 'react';
-import { Package, User, Mail, MessageCircle, Smartphone, CheckCircle, Loader2 } from 'lucide-react';
-import { Device, BorrowFormData } from '../types/device';
-import { fetchDevices, borrowDevice, getAvailableDevices } from '../services/api';
+import {
+  Package,
+  User,
+  Mail,
+  CheckCircle,
+  Loader2,
+  ShoppingCart,
+  X,
+  Plus,
+  AlertCircle,
+  Trash2,
+  RefreshCw,
+} from 'lucide-react';
+import { Device, BorrowFormData, CartItem, SubmissionResult } from '../types/device';
+import {
+  fetchDevices,
+  borrowMultipleDevices,
+  getAvailableDevices,
+  ApiRequestError,
+} from '../services/api';
 import { getEmailError, getRequiredFieldError } from '../utils/validation';
 
-export const BorrowForm: React.FC = () => {
+interface BorrowFormProps {
+  onShowToast: (type: 'success' | 'error' | 'warning' | 'info', title: string, message?: string) => void;
+}
+
+export const BorrowForm: React.FC<BorrowFormProps> = ({ onShowToast }) => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [selectedDeviceType, setSelectedDeviceType] = useState('');
+  const [submissionResults, setSubmissionResults] = useState<SubmissionResult[]>([]);
+  const [progress, setProgress] = useState({ current: 0, total: 0, deviceId: '' });
+
   const [formData, setFormData] = useState<BorrowFormData>({
     name: '',
     email: '',
-    reason: '',
-    customReason: '',
-    deviceType: '',
-    deviceName: ''
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const reasons = [
-    { value: 'Forgot at home', label: 'Forgot at home' },
-    { value: 'Lost device', label: 'Lost device' },
-    { value: 'others', label: 'Others' }
-  ];
 
   useEffect(() => {
     loadDevices();
   }, []);
 
   const loadDevices = async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const data = await fetchDevices();
       setDevices(data);
     } catch (error) {
-      console.error('Failed to load devices:', error);
+      const message =
+        error instanceof ApiRequestError
+          ? error.message
+          : 'Failed to load devices. Please try again.';
+      setLoadError(message);
+      onShowToast('error', 'Failed to load devices', message);
     } finally {
       setLoading(false);
     }
   };
 
   const availableDevices = getAvailableDevices(devices);
-  const deviceTypes = [...new Set(availableDevices.map(device => device.DeviceType))];
-  const filteredDevices = formData.deviceType 
-    ? availableDevices.filter(device => device.DeviceType === formData.deviceType)
-    : [];
+  const deviceTypes = [...new Set(availableDevices.map((device) => device.DeviceType))];
+  const filteredDevices = selectedDeviceType
+    ? availableDevices.filter((device) => device.DeviceType === selectedDeviceType)
+    : availableDevices;
+
+  // Filter out devices already in cart
+  const selectableDevices = filteredDevices.filter(
+    (device) => !cart.some((item) => item.device.AssetID === device.AssetID)
+  );
 
   const handleInputChange = (field: keyof BorrowFormData, value: string) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [field]: value,
-      ...(field === 'deviceType' ? { deviceName: '' } : {})
     }));
-    
-    // Clear error when user starts typing
+
     if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: '' }));
+      setErrors((prev) => ({ ...prev, [field]: '' }));
     }
+  };
+
+  const addToCart = (device: Device) => {
+    if (cart.some((item) => item.device.AssetID === device.AssetID)) {
+      onShowToast('warning', 'Already in cart', `${device.AssetID} is already in your cart.`);
+      return;
+    }
+
+    setCart((prev) => [...prev, { device, addedAt: new Date() }]);
+    onShowToast('success', 'Added to cart', `${device.AssetID} has been added to your cart.`);
+  };
+
+  const removeFromCart = (assetId: string) => {
+    setCart((prev) => prev.filter((item) => item.device.AssetID !== assetId));
+  };
+
+  const clearCart = () => {
+    setCart([]);
+  };
+
+  const isInCart = (assetId: string) => {
+    return cart.some((item) => item.device.AssetID === assetId);
   };
 
   const validateForm = (): boolean => {
@@ -68,19 +117,10 @@ export const BorrowForm: React.FC = () => {
     const emailError = getEmailError(formData.email);
     if (emailError) newErrors.email = emailError;
 
-    const reasonError = getRequiredFieldError(formData.reason, 'Reason');
-    if (reasonError) newErrors.reason = reasonError;
-
-    if (formData.reason === 'others') {
-      const customReasonError = getRequiredFieldError(formData.customReason || '', 'Custom reason');
-      if (customReasonError) newErrors.customReason = customReasonError;
+    if (cart.length === 0) {
+      newErrors.cart = 'Please add at least one device to your cart';
+      onShowToast('warning', 'Cart is empty', 'Please add at least one device before submitting.');
     }
-
-    const deviceTypeError = getRequiredFieldError(formData.deviceType, 'Device type');
-    if (deviceTypeError) newErrors.deviceType = deviceTypeError;
-
-    const deviceNameError = getRequiredFieldError(formData.deviceName, 'Device name');
-    if (deviceNameError) newErrors.deviceName = deviceNameError;
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -88,190 +128,362 @@ export const BorrowForm: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) return;
 
     setSubmitting(true);
+    setProgress({ current: 0, total: cart.length, deviceId: '' });
+
+    const finalReason = "";
+
     try {
-      await borrowDevice(formData.deviceName, formData.name, formData.email, formData.reason, formData.deviceType, formData.customReason);
+      const results = await borrowMultipleDevices(
+        cart.map((item) => item.device),
+        formData.name,
+        formData.email,
+        finalReason,
+        (completed, total, currentDevice) => {
+          setProgress({ current: completed, total, deviceId: currentDevice });
+        }
+      );
+
+      setSubmissionResults(results);
       setSubmitted(true);
-      setFormData({
-        name: '',
-        email: '',
-        reason: '',
-        customReason: '',
-        deviceType: '',
-        deviceName: ''
-      });
-      await loadDevices(); // Refresh device list
+
+      const successCount = results.filter((r) => r.success).length;
+      const failCount = results.filter((r) => !r.success).length;
+
+      if (failCount === 0) {
+        onShowToast(
+          'success',
+          'All devices borrowed successfully!',
+          `${successCount} device(s) have been checked out.`
+        );
+      } else if (successCount > 0) {
+        onShowToast(
+          'warning',
+          'Partial success',
+          `${successCount} device(s) borrowed, ${failCount} failed.`
+        );
+      } else {
+        onShowToast('error', 'All requests failed', 'Please check the error messages and try again.');
+      }
+
+      await loadDevices();
     } catch (error) {
-      console.error('Failed to borrow device:', error);
+      const message =
+        error instanceof ApiRequestError ? error.message : 'An unexpected error occurred.';
+      onShowToast('error', 'Submission failed', message);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleReset = () => {
+    setSubmitted(false);
+    setSubmissionResults([]);
+    setCart([]);
+    setFormData({
+      name: '',
+      email: '',
+    });
+    setProgress({ current: 0, total: 0, deviceId: '' });
+  };
+
+  // Submission Results View
   if (submitted) {
+    const successCount = submissionResults.filter((r) => r.success).length;
+    const failCount = submissionResults.filter((r) => !r.success).length;
+
     return (
-      <div className="text-center py-12">
-        <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-          <CheckCircle className="w-8 h-8 text-green-600" />
+      <div className="space-y-6">
+        {/* Summary Header */}
+        <div className="text-center py-6">
+          <div
+            className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 ${failCount === 0
+              ? 'bg-green-500/20'
+              : successCount > 0
+                ? 'bg-yellow-500/20'
+                : 'bg-red-500/20'
+              }`}
+          >
+            {failCount === 0 ? (
+              <CheckCircle className="w-10 h-10 text-green-600" />
+            ) : (
+              <AlertCircle className="w-10 h-10 text-yellow-600" />
+            )}
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900 mb-2">
+            {failCount === 0 ? 'All Devices Borrowed!' : 'Submission Complete'}
+          </h3>
+          <p className="text-gray-600">
+            {successCount} successful, {failCount} failed
+          </p>
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">Device Borrowed Successfully!</h3>
-        <p className="text-gray-600 mb-6">Your request has been processed. Please take care of the device.</p>
-        <button
-          onClick={() => setSubmitted(false)}
-          className="bg-[#CE483F] text-white px-6 py-2 rounded-lg hover:bg-[#b83e36] transition-colors"
-        >
-          Borrow Another Device
-        </button>
+
+        {/* Results List */}
+        <div className="space-y-3">
+          {submissionResults.map((result) => (
+            <div
+              key={result.deviceId}
+              className={`cart-item ${result.success ? 'success' : 'error'}`}
+            >
+              <div className="flex items-center gap-3">
+                {result.success ? (
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                )}
+                <div>
+                  <p className="font-medium text-gray-900">{result.deviceId}</p>
+                  {result.error && <p className="text-sm text-red-600">{result.error}</p>}
+                </div>
+              </div>
+              <span className={`badge ${result.success ? 'badge-success' : 'badge-error'}`}>
+                {result.success ? 'Success' : 'Failed'}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-4">
+          <button onClick={handleReset} className="btn-primary flex-1">
+            <ShoppingCart className="w-4 h-4 mr-2" />
+            Borrow More Devices
+          </button>
+        </div>
       </div>
     );
   }
 
+  // Loading State
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-[#CE483F]" />
-        <span className="ml-2 text-gray-600">Loading devices...</span>
+      <div className="flex flex-col items-center justify-center py-16">
+        <Loader2 className="w-12 h-12 animate-spin text-[var(--color-primary)] mb-4" />
+        <p className="text-gray-600">Loading devices...</p>
+      </div>
+    );
+  }
+
+  // Error State
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+        <p className="text-gray-800 mb-2 font-semibold">Failed to load devices</p>
+        <p className="text-gray-500 text-sm mb-6">{loadError}</p>
+        <button onClick={loadDevices} className="btn-primary">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Try Again
+        </button>
       </div>
     );
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div>
-        <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
-          <User className="w-4 h-4 mr-2" />
-          Name *
-        </label>
-        <input
-          type="text"
-          value={formData.name}
-          onChange={(e) => handleInputChange('name', e.target.value)}
-          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-            errors.name ? 'border-red-300 bg-red-50' : 'border-gray-300'
-          }`}
-          placeholder="Juan Dela Cruz"
-        />
-        {errors.name && <p className="text-red-600 text-sm mt-1">{errors.name}</p>}
-      </div>
+      {/* Personal Information Section */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+          <User className="w-5 h-5 text-[var(--color-primary)]" />
+          Personal Information
+        </h3>
 
-      <div>
-        <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
-          <Mail className="w-4 h-4 mr-2" />
-          Email Address *
-        </label>
-        <input
-          type="email"
-          value={formData.email}
-          onChange={(e) => handleInputChange('email', e.target.value)}
-          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-            errors.email ? 'border-red-300 bg-red-50' : 'border-gray-300'
-          }`}
-          placeholder="juandelacruz30@ics.edu.sg"
-        />
-        {errors.email && <p className="text-red-600 text-sm mt-1">{errors.email}</p>}
-      </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="form-label">
+              <User className="w-4 h-4 mr-2 text-gray-400" />
+              Name <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => handleInputChange('name', e.target.value)}
+              className={`form-input ${errors.name ? 'error' : ''}`}
+              placeholder="Juan Dela Cruz"
+            />
+            {errors.name && (
+              <p className="error-text">
+                <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                {errors.name}
+              </p>
+            )}
+          </div>
 
-      <div>
-        <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
-          <MessageCircle className="w-4 h-4 mr-2" />
-          Reason for Borrowing *
-        </label>
-        <select
-          value={formData.reason}
-          onChange={(e) => handleInputChange('reason', e.target.value)}
-          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-            errors.reason ? 'border-red-300 bg-red-50' : 'border-gray-300'
-          }`}
-        >
-          <option value="">Select a reason</option>
-          {reasons.map(reason => (
-            <option key={reason.value} value={reason.value}>
-              {reason.label}
-            </option>
-          ))}
-        </select>
-        {errors.reason && <p className="text-red-600 text-sm mt-1">{errors.reason}</p>}
-      </div>
-
-      {formData.reason === 'others' && (
-        <div>
-          <label className="text-sm font-medium text-gray-700 mb-2 block">
-            Please specify *
-          </label>
-          <input
-            type="text"
-            value={formData.customReason || ''}
-            onChange={(e) => handleInputChange('customReason', e.target.value)}
-            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-              errors.customReason ? 'border-red-300 bg-red-50' : 'border-gray-300'
-            }`}
-            placeholder="Please describe your reason"
-          />
-          {errors.customReason && <p className="text-red-600 text-sm mt-1">{errors.customReason}</p>}
+          <div>
+            <label className="form-label">
+              <Mail className="w-4 h-4 mr-2 text-gray-400" />
+              Email <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => handleInputChange('email', e.target.value)}
+              className={`form-input ${errors.email ? 'error' : ''}`}
+              placeholder="juandelacruz30@ics.edu.sg"
+            />
+            {errors.email && (
+              <p className="error-text">
+                <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                {errors.email}
+              </p>
+            )}
+          </div>
         </div>
-      )}
-
-      <div>
-        <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
-          <Smartphone className="w-4 h-4 mr-2" />
-          Type of Device *
-        </label>
-        <select
-          value={formData.deviceType}
-          onChange={(e) => handleInputChange('deviceType', e.target.value)}
-          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-            errors.deviceType ? 'border-red-300 bg-red-50' : 'border-gray-300'
-          }`}
-        >
-          <option value="">Select device type</option>
-          {deviceTypes.map(type => (
-            <option key={type} value={type}>
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-            </option>
-          ))}
-        </select>
-        {errors.deviceType && <p className="text-red-600 text-sm mt-1">{errors.deviceType}</p>}
       </div>
 
-      {formData.deviceType && (
+      {/* Device Selection Section */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+          <Package className="w-5 h-5 text-[var(--color-primary)]" />
+          Select Devices
+        </h3>
+
+        {/* Device Type Filter */}
         <div>
-          <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
-            <Package className="w-4 h-4 mr-2" />
-            Select Device Name *
-          </label>
+          <label className="form-label">Filter by Device Type</label>
           <select
-            value={formData.deviceName}
-            onChange={(e) => handleInputChange('deviceName', e.target.value)}
-            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-[#CE483F] focus:border-transparent transition-colors ${
-              errors.deviceName ? 'border-red-300 bg-red-50' : 'border-gray-300'
-            }`}
+            value={selectedDeviceType}
+            onChange={(e) => setSelectedDeviceType(e.target.value)}
+            className="form-select"
           >
-            <option value="">Select a device</option>
-            {filteredDevices.map(device => (
-              <option key={device.AssetID} value={device.AssetID}>
-                {device.AssetID}
+            <option value="">All Types</option>
+            {deviceTypes.map((type) => (
+              <option key={type} value={type}>
+                {type.charAt(0).toUpperCase() + type.slice(1)}
               </option>
             ))}
           </select>
-          {errors.deviceName && <p className="text-red-600 text-sm mt-1">{errors.deviceName}</p>}
+        </div>
+
+        {/* Available Devices Grid */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-600">
+              {selectableDevices.length} device(s) available
+            </p>
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={clearCart}
+                className="text-sm text-red-400 hover:text-red-300 flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Cart
+              </button>
+            )}
+          </div>
+
+          {selectableDevices.length === 0 && cart.length === 0 ? (
+            <div className="empty-state">
+              <Package className="empty-state-icon" />
+              <p>No devices available</p>
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto p-1">
+              {selectableDevices.map((device) => (
+                <div
+                  key={device.AssetID}
+                  onClick={() => addToCart(device)}
+                  className={`device-card ${isInCart(device.AssetID) ? 'in-cart' : ''}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{device.AssetID}</p>
+                      <p className="text-sm text-gray-500">{device.DeviceType}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center hover:bg-[var(--color-primary)] group transition-colors"
+                    >
+                      <Plus className="w-4 h-4 text-gray-600 group-hover:text-white" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cart Section */}
+      {cart.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-green-600" />
+            Your Cart ({cart.length})
+          </h3>
+
+          <div className="space-y-2">
+            {cart.map((item) => (
+              <div key={item.device.AssetID} className="cart-item">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
+                    <Package className="w-5 h-5 text-green-400" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{item.device.AssetID}</p>
+                    <p className="text-sm text-gray-500">{item.device.DeviceType}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeFromCart(item.device.AssetID)}
+                  className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center hover:bg-red-500/40 transition-colors"
+                >
+                  <X className="w-4 h-4 text-red-400" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
+      {errors.cart && (
+        <p className="error-text">
+          <AlertCircle className="w-3.5 h-3.5 mr-1" />
+          {errors.cart}
+        </p>
+      )}
+
+      {/* Progress Bar (during submission) */}
+      {submitting && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">
+              Processing {progress.deviceId || '...'}
+            </span>
+            <span className="text-gray-800 font-medium">
+              {progress.current}/{progress.total}
+            </span>
+          </div>
+          <div className="progress-bar">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Submit Button */}
       <button
         type="submit"
-        disabled={submitting}
-        className="w-full bg-[#CE483F] text-white py-3 px-4 rounded-lg hover:bg-[#b83e36] focus:ring-2 focus:ring-[#CE483F] focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+        disabled={submitting || cart.length === 0}
+        className="btn-primary w-full"
       >
         {submitting ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            Processing...
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            Processing {progress.current}/{progress.total}...
           </>
         ) : (
-          'Borrow Device'
+          <>
+            <ShoppingCart className="w-5 h-5 mr-2" />
+            Borrow {cart.length} Device{cart.length !== 1 ? 's' : ''}
+          </>
         )}
       </button>
     </form>
