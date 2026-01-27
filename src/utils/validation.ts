@@ -1,5 +1,7 @@
 export const validateEmail = (email: string): boolean => {
-  return email.includes('@ics.edu.sg');
+  // General email validation regex
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
 };
 
 export const validateRequired = (value: string): boolean => {
@@ -11,7 +13,8 @@ export const getEmailError = (email: string): string | null => {
     return 'Email is required';
   }
   if (!validateEmail(email)) {
-    return 'Email must contain @ics.edu.sg';
+    // Updated error message
+    return 'Please enter a valid email address';
   }
   return null;
 };
