@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Package,
+  Search,
   User,
   Mail,
   CheckCircle,
@@ -33,6 +34,7 @@ export const BorrowForm: React.FC<BorrowFormProps> = ({ onShowToast }) => {
   const [submitted, setSubmitted] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedDeviceType, setSelectedDeviceType] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [submissionResults, setSubmissionResults] = useState<SubmissionResult[]>([]);
   const [progress, setProgress] = useState({ current: 0, total: 0, deviceId: '' });
 
@@ -66,9 +68,11 @@ export const BorrowForm: React.FC<BorrowFormProps> = ({ onShowToast }) => {
 
   const availableDevices = getAvailableDevices(devices);
   const deviceTypes = [...new Set(availableDevices.map((device) => device.DeviceType))];
-  const filteredDevices = selectedDeviceType
-    ? availableDevices.filter((device) => device.DeviceType === selectedDeviceType)
-    : availableDevices;
+  const filteredDevices = availableDevices.filter((device) => {
+    const matchesType = !selectedDeviceType || device.DeviceType === selectedDeviceType;
+    const matchesSearch = !searchQuery || device.AssetID.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesType && matchesSearch;
+  });
 
   // Filter out devices already in cart
   const selectableDevices = filteredDevices.filter(
@@ -187,6 +191,8 @@ export const BorrowForm: React.FC<BorrowFormProps> = ({ onShowToast }) => {
       name: '',
       email: '',
     });
+    setSearchQuery('');
+    setSelectedDeviceType('');
     setProgress({ current: 0, total: 0, deviceId: '' });
   };
 
@@ -341,21 +347,40 @@ export const BorrowForm: React.FC<BorrowFormProps> = ({ onShowToast }) => {
           Select Devices
         </h3>
 
-        {/* Device Type Filter */}
-        <div>
-          <label className="form-label">Filter by Device Type</label>
-          <select
-            value={selectedDeviceType}
-            onChange={(e) => setSelectedDeviceType(e.target.value)}
-            className="form-select"
-          >
-            <option value="">All Types</option>
-            {deviceTypes.map((type) => (
-              <option key={type} value={type}>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </option>
-            ))}
-          </select>
+        {/* Device Type Filter & Search */}
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="form-label">Filter by Device Type</label>
+            <select
+              value={selectedDeviceType}
+              onChange={(e) => setSelectedDeviceType(e.target.value)}
+              className="form-select"
+            >
+              <option value="">All Types</option>
+              {deviceTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="form-label">
+              <Search className="w-4 h-4 mr-2 text-gray-400" />
+              Search Device
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="form-input"
+                style={{ paddingLeft: '2.5rem' }}
+                placeholder="Search by Asset ID…"
+              />
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
         </div>
 
         {/* Available Devices Grid */}
